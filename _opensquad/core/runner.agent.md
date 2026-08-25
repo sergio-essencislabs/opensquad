@@ -107,7 +107,7 @@ If the user declines, stop without writing anything and offer to adjust based on
 
 1. Prepend one row to `squads/{name}/_memory/runs.md`, immediately after the header row (create the
    file first with the standard header if it doesn't exist yet — same table shape and
-   reverse-chronological, newest-run-first convention the full pipeline uses):
+   reverse-chronological, newest-first convention the full pipeline uses):
    - `Data`: today's date (YYYY-MM-DD)
    - `Run ID`: `adhoc-{agent id}-{HHmmss}`
    - `Tema`: the user's request, 1 sentence
