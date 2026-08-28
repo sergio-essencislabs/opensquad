@@ -497,7 +497,7 @@ This archives the run state for the `runs` command while keeping the squad root 
    - `Run ID`: the `run_id` for this execution
    - `Tema`: the topic or user request from this run (1 sentence max)
    - `Output`: brief description of what was generated (e.g., "Carrossel 9 slides", "Thread 7 posts")
-   - `Resultado`: one of — `Aprovado` / `Rejeitado` / `Publicado` / `Abortado`
+   - `Resultado`: one of — `Aprovado` / `Rejeitado` / `Publicado` / `Abortado` (ad-hoc runs logged by `runner.agent.md` add a fifth value, `Ad-hoc`)
 
    No other data. Do not add preferences, scores, file paths, or technical notes to `runs.md`.
 

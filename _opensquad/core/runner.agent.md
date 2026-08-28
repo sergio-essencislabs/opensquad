@@ -18,10 +18,13 @@ sequencing, output collection) — this file only describes what's **different**
 - The user names a specific agent/persona directly, by name or by role, and the ask maps to
   something that agent's own `tasks:` already cover.
 - The ask does not require the other agents in the squad (their contribution would be "fora de
-  escopo" anyway) and does not produce a PR that needs the pipeline's approval checkpoints.
+  escopo" anyway). A single-agent ask that ends in a PR is fine — the PR is opened only after this
+  runner's confirmation gate and merged only by a human — but anything needing multi-agent review
+  cycles belongs to the pipeline.
 
 If the ask genuinely needs cross-agent coordination (e.g. a security finding that needs a code fix
-reviewed and merged), route to the full pipeline instead — this runner has no PR/approval flow.
+implemented by one agent and reviewed by another before merge), route to the full pipeline instead
+— this runner has no review cycle; its PRs await human review on GitHub.
 
 ## Initialization
 
@@ -31,16 +34,47 @@ reviewed and merged), route to the full pipeline instead — this runner has no 
      agents with their display names) — never guess which persona was meant.
 2. Read the full agent file (`squads/{name}/agents/{agent}/{agent}.agent.md` or equivalent path
    from `squad-party.csv`).
-3. Determine which task(s) to run:
+3. Determine which task(s) to run — **every persona in the squad is invocable ad-hoc**, not just a
+   privileged subset:
    - If the user's request names a specific task (or clearly maps to one via the agent's own
      `tasks:` list and each task's frontmatter), run just that task.
    - If the request is broad ("atualize a documentação") and the agent has multiple tasks, run the
-     ones whose frontmatter `input`/`output` fit an ad-hoc context (no upstream pipeline artifact
-     required) — for Marta (`documentation-architect`) that's `atualizar-documentacao.md` and
-     `curar-knowledge-base.md` run in sequence, in that order, **not** `auditar-documentacao.md`
-     (that task's input is a pipeline checkpoint artifact that doesn't exist outside a run).
+     ones that fit the request, in the sequence the agent's own task frontmatter implies. Broad
+     per-persona mappings are squad-specific and live in each squad's wrapper skill — e.g. the
+     Guardian wrapper maps "Marta, atualize a documentação" to `atualizar-documentacao.md` +
+     `curar-knowledge-base.md`, in that order.
+   - A task whose declared `input` is a pipeline artifact does **not** disqualify it — see
+     "Ad-hoc input synthesis" below for how to stand in for the missing artifact, and when to
+     refuse instead.
 4. Company context (`_opensquad/_memory/company.md`) and squad memory
    (`squads/{name}/_memory/memories.md`) load the same way as in the full pipeline.
+
+## Ad-hoc input synthesis
+
+Most tasks declare `input:` artifacts produced by earlier pipeline steps. In ad-hoc mode those
+artifacts don't exist. Two categories, two rules:
+
+- **Scope-like inputs** (`audit-scope.md` and equivalents — product, target area, depth, weekly
+  focus): synthesize them from the user's request. Derive the product from the request or from the
+  repository the session is open in; ask **at most one** clarifying question if product or target
+  area is genuinely ambiguous. State the synthesized scope in one line ("Escopo ad-hoc: E-LIMS,
+  módulo de certificados, varredura rápida") before starting — in conversation, never as a scope
+  file on disk.
+- **Findings-like inputs** (achados aprovados, roteamento, lista de PRs aprovados — anything that
+  represents a *decision or discovery* made earlier in a pipeline): these must come from the user,
+  pasted into the request or pointed to (a file, a PR, an issue). Reshape what the user provided
+  into the format the task expects, in-conversation. **Never invent findings, approvals, or
+  routings.** If a findings-like input is missing and the task can't run without it, say so and
+  offer the full pipeline.
+
+- **Wrapper reclassification:** a squad's wrapper skill may explicitly declare that a given broad
+  request runs a task in scope-like mode even though the task's pipeline `input` is findings-like —
+  e.g. a docs-closure task that normally processes approved PRs can be declared to run as a *full
+  docs-vs-code sync* when invoked without PRs. The wrapper's per-persona map is authoritative for
+  these reclassifications; absent one, the findings-like rule above wins.
+
+If a request would chain both halves — discover findings AND act on them across multiple agents —
+that's the pipeline's job; offer it instead of improvising a checkpoint-free copy of it here.
 
 ## Execution
 
@@ -56,8 +90,9 @@ the next — with these differences:
   e.g. `Documentation/Main/GeoCloud.xlsx`, `Documentation/Main/KnowledgeBase/**`. If a task's output
   format also names a `squads/{name}/output/...` path (some tasks double as pipeline steps), skip
   writing that copy in ad-hoc mode — there is no `run_id` to place it under.
-- **No pipeline checkpoints.** The 4-checkpoint flow (scope, review findings, approve PRs, final
-  summary) does not apply.
+- **No pipeline checkpoints.** Whatever human-checkpoint flow that squad's `pipeline.yaml`
+  declares (the list and count vary per squad) does not apply — only this runner's single
+  confirmation gate below.
 
 ## Helper agents: the lead can pull in narrow expertise, never delegate the task away
 
@@ -69,6 +104,11 @@ domain, not hers.
 
 This is narrow-scope consultation, not task delegation:
 
+- **Any persona can lead, and any lead can consult any other member of the same squad** — the
+  helper graph is open by design. What keeps it safe is depth, not a whitelist: **helpers are
+  depth-1**. A helper answers the lead directly and never invokes a further helper of its own; if
+  answering would itself require consulting a third persona, that's a signal the ask belongs to the
+  full pipeline.
 - The helper answers **one specific question** with evidence (reads the real code, reports back) —
   it does not run its own task chain, does not open a PR, does not produce its own pipeline-shaped
   output file. Dispatch it as a subagent with a tightly scoped prompt (the exact question + the
@@ -87,11 +127,15 @@ This is narrow-scope consultation, not task delegation:
 
 ## The one checkpoint this runner keeps
 
-Before writing any file, present a short summary of what will change (which files, and a one-line
-description of each change — not a full diff dump) and wait for the user's go-ahead. This is the
-only confirmation gate in ad-hoc mode; it exists because writing documentation unsupervised carries
-the same hallucination risk any other agent output does (see `documentation-architect.agent.md`'s
-own principles on never treating a document as trivially safe to auto-correct).
+Before performing **any external write** — writing/editing a file outside the squad's own
+`_memory/`, creating a git branch or commit, pushing, opening a PR, posting a PR review or comment,
+creating or commenting on a GitHub issue, or adding an item to a GitHub Project — present a short
+summary of everything about to change (each file with a one-line description; for GitHub actions,
+the exact action and target) and wait for the user's go-ahead. This is the only confirmation gate
+in ad-hoc mode, and it is **consolidated**: one summary, one yes/no — not one prompt per file. It
+exists because unsupervised writes carry the same hallucination risk any other agent output does
+(see `documentation-architect.agent.md`'s own principles on never treating a document as trivially
+safe to auto-correct).
 
 ```
 📚 {Agent Name} — pronta para gravar:
@@ -103,7 +147,17 @@ Gravar agora? (s/n)
 
 If the user declines, stop without writing anything and offer to adjust based on their feedback.
 
-## After writing
+Two invariants survive even after a "yes" (they are squad rules, not runner rules, but this runner
+enforces them): **never push directly to `main`/`master` of a product repository** (code changes go
+branch → PR, merged by a human), and the squad's own issue/board conventions — declared in its
+wrapper skill and `_memory/memories.md` — keep applying unchanged.
+
+## After the run (with or without writes)
+
+A run that ends with no external write — an opinion delivered in chat, or a declined gate — is
+still a run: log it the same way (`squads/{name}/_memory/` is squad-internal and exempt from the
+gate). In the `Output` field, describe the chat-only outcome ("parecer no chat", "abortado no
+gate") and any helpers consulted — this row is what makes ad-hoc runs auditable.
 
 1. Prepend one row to `squads/{name}/_memory/runs.md`, immediately after the header row (create the
    file first with the standard header if it doesn't exist yet — same table shape and
@@ -112,7 +166,9 @@ If the user declines, stop without writing anything and offer to adjust based on
    - `Run ID`: `adhoc-{agent id}-{HHmmss}`
    - `Tema`: the user's request, 1 sentence
    - `Output`: brief description of what was written
-   - `Resultado`: `Ad-hoc`
+   - `Resultado`: `Ad-hoc` — this runner deliberately extends the pipeline's closed enum
+     (Aprovado/Rejeitado/Publicado/Abortado) with this fifth value; it is what distinguishes
+     ad-hoc rows from pipeline rows in the same table
 2. Do **not** write to `squads/{name}/_memory/memories.md` unless the user gave explicit feedback
    during this run (same rule as the full pipeline's memory-update step).
 3. Present a short completion summary — files touched, nothing else (no dashboard, no "run again"
@@ -122,6 +178,7 @@ If the user declines, stop without writing anything and offer to adjust based on
 
 - If the named agent has no `tasks:` frontmatter, run it monolithically (same fallback as the full
   pipeline) using whatever the request describes as the job.
-- If a task's declared `input` requires an artifact that only exists mid-pipeline (e.g. an
-  `audit-scope.md` from a checkpoint), tell the user this task can't run standalone and suggest the
-  full pipeline instead — do not fabricate a stand-in input.
+- If a task's declared `input` requires a mid-pipeline artifact, apply "Ad-hoc input synthesis":
+  scope-like inputs are synthesized from the request; findings-like inputs must be provided by the
+  user. Only refuse (suggesting the full pipeline) when a findings-like input is missing — and
+  never fabricate one.
